@@ -30,8 +30,8 @@ jobs:
              dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm || true
           fi
           
-          # Install development tools
-          yum install -y gcc gcc-c++ make perl wget tar gzip
+          # Install development tools and static libraries
+          yum install -y gcc gcc-c++ make perl wget tar gzip glibc-static
 
       - name: Download OpenSSL
         run: |
@@ -45,22 +45,23 @@ jobs:
         working-directory: openssl-src
         run: |
           # Configure OpenSSL for static library build
-          # no-shared: Build only static libraries
+          # no-shared: Build only static libraries (generates .a files)
           # no-tests: Skip building tests to speed up compilation
+          # no-apps: Skip building command-line tools (avoids static linking issues)
           # -fPIC: Position Independent Code (useful if static lib is used in shared lib)
           ./Configure linux-x86_64 \
             --prefix=/opt/openssl \
             --openssldir=/opt/openssl/ssl \
             no-shared \
             no-tests \
-            -static \
+            no-apps \
             -fPIC
           
-          # Build
-          make -j$(nproc)
+          # Build only libraries (skip apps to avoid static linking errors)
+          make -j$(nproc) build_libs
           
-          # Install to prefix directory
-          make install_sw install_ssldirs
+          # Install libraries and headers only
+          make install_sw
 
       - name: Package Release
         run: |
@@ -69,10 +70,9 @@ jobs:
           # Create package directory
           mkdir -p openssl-package
           
-          # Copy necessary files
+          # Copy necessary files (headers and static libraries only)
           cp -r /opt/openssl/include openssl-package/
           cp -r /opt/openssl/lib64 openssl-package/lib
-          cp -r /opt/openssl/bin openssl-package/
           
           # Create version info
           echo "OpenSSL ${OPENSSL_VERSION}" > openssl-package/VERSION
@@ -108,7 +108,6 @@ jobs:
             ### Contents
             - `include/` - Header files
             - `lib/` - Static libraries (libssl.a, libcrypto.a)
-            - `bin/` - OpenSSL command-line tool
             
             ### Usage
             Link with `-lssl -lcrypto -lpthread -ldl` when using these static libraries.
