@@ -48,7 +48,7 @@ jobs:
           ./configure --prefix=./install \
            --disable-everything \
            --enable-shared --disable-static \
-           --enable-network --enable-runtime-cpudetect --enable-openssl \
+           --enable-network --enable-runtime-cpudetect \
            --enable-avformat --enable-avcodec --enable-avutil --enable-swscale --enable-swresample \
            --enable-protocol=tcp,udp,rtp,rtmp,rtmps,http,https,tls,file,hls,concat \
            --enable-demuxer=flv,mpegts,mov,mp4,h264,hevc,webm,rtsp,sdp,rtp,matroska,avi,mp3,aac,wav,image2,gif,concat,ass,subrip,webvtt \
