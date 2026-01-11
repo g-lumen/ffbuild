@@ -14,79 +14,86 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
           - arch: x86_64
+            runner: ubuntu-latest
             image: quay.io/pypa/manylinux_2_28_x86_64
             openssl_target: linux-x86_64
             lib_dir: lib64
           - arch: aarch64
+            runner: ubuntu-24.04-arm  # Native ARM64 runner (free for public repos)
             image: quay.io/pypa/manylinux_2_28_aarch64
             openssl_target: linux-aarch64
             lib_dir: lib
+    
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
     
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # QEMU is required for running aarch64 containers on x86_64 runners
-      - name: Set up QEMU
-        if: matrix.arch == 'aarch64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
+      - name: Install Dependencies
+        run: |
+          yum install -y epel-release || true
+          if ! rpm -q epel-release; then
+            dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm || true
+          fi
+          yum install -y gcc gcc-c++ make perl wget tar gzip
 
-      - name: Build OpenSSL in Container
+      - name: Download OpenSSL
+        run: |
+          OPENSSL_VERSION="${{ github.event.inputs.openssl_version || '3.3.1' }}"
+          echo "Building OpenSSL version: ${OPENSSL_VERSION}"
+          wget https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz
+          tar -xzf openssl-${OPENSSL_VERSION}.tar.gz
+          mv openssl-${OPENSSL_VERSION} openssl-src
+
+      - name: Configure and Build OpenSSL
+        working-directory: openssl-src
+        run: |
+          # Configure OpenSSL for static library build
+          # no-shared: Build only static libraries (generates .a files)
+          # no-tests: Skip building tests to speed up compilation
+          # no-apps: Skip building command-line tools (avoids static linking issues)
+          # -fPIC: Position Independent Code (useful if static lib is used in shared lib)
+          ./Configure ${{ matrix.openssl_target }} \
+            --prefix=/opt/openssl \
+            --openssldir=/opt/openssl/ssl \
+            no-shared \
+            no-tests \
+            no-apps \
+            -fPIC
+          
+          # Build only libraries
+          make -j$(nproc) build_libs
+          
+          # Install libraries and headers
+          make install_sw
+
+      - name: Package Release
         run: |
           OPENSSL_VERSION="${{ github.event.inputs.openssl_version || '3.3.1' }}"
           
-          docker run --rm \
-            -v "${{ github.workspace }}:/workspace" \
-            -w /workspace \
-            --platform linux/${{ matrix.arch == 'aarch64' && 'arm64' || 'amd64' }} \
-            ${{ matrix.image }} \
-            bash -c "
-              # Install dependencies
-              yum install -y epel-release || true
-              if ! rpm -q epel-release; then
-                dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm || true
-              fi
-              yum install -y gcc gcc-c++ make perl wget tar gzip
-              
-              # Download OpenSSL
-              wget https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz
-              tar -xzf openssl-${OPENSSL_VERSION}.tar.gz
-              cd openssl-${OPENSSL_VERSION}
-              
-              # Configure and build
-              ./Configure ${{ matrix.openssl_target }} \
-                --prefix=/opt/openssl \
-                --openssldir=/opt/openssl/ssl \
-                no-shared \
-                no-tests \
-                no-apps \
-                -fPIC
-              
-              make -j\$(nproc) build_libs
-              make install_sw
-              
-              # Package
-              mkdir -p /workspace/openssl-package
-              cp -r /opt/openssl/include /workspace/openssl-package/
-              cp -r /opt/openssl/${{ matrix.lib_dir }} /workspace/openssl-package/lib
-              
-              # Version info
-              echo \"OpenSSL ${OPENSSL_VERSION}\" > /workspace/openssl-package/VERSION
-              echo \"Built with manylinux_2_28_${{ matrix.arch }}\" >> /workspace/openssl-package/VERSION
-              echo \"Static libraries for Linux ${{ matrix.arch }}\" >> /workspace/openssl-package/VERSION
-              echo \"Build date: \$(date -u +%Y-%m-%dT%H:%M:%SZ)\" >> /workspace/openssl-package/VERSION
-              
-              # Create tarball
-              cd /workspace/openssl-package
-              tar -czvf /workspace/openssl-${OPENSSL_VERSION}-linux-${{ matrix.arch }}-static.tar.gz .
-            "
+          # Create package directory
+          mkdir -p openssl-package
+          
+          # Copy necessary files (headers and static libraries only)
+          cp -r /opt/openssl/include openssl-package/
+          cp -r /opt/openssl/${{ matrix.lib_dir }} openssl-package/lib
+          
+          # Create version info
+          echo "OpenSSL ${OPENSSL_VERSION}" > openssl-package/VERSION
+          echo "Built with manylinux_2_28_${{ matrix.arch }}" >> openssl-package/VERSION
+          echo "Static libraries for Linux ${{ matrix.arch }}" >> openssl-package/VERSION
+          echo "Build date: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> openssl-package/VERSION
+          
+          # Create tarball
+          cd openssl-package
+          tar -czvf ../openssl-${OPENSSL_VERSION}-linux-${{ matrix.arch }}-static.tar.gz .
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
