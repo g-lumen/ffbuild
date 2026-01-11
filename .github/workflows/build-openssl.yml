@@ -1,4 +1,4 @@
-name: Build OpenSSL Static Linux x86_64
+name: Build OpenSSL Static Linux
 
 on:
   workflow_dispatch:
@@ -15,80 +15,97 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: quay.io/pypa/manylinux_2_28_x86_64
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            image: quay.io/pypa/manylinux_2_28_x86_64
+            openssl_target: linux-x86_64
+            lib_dir: lib64
+          - arch: aarch64
+            image: quay.io/pypa/manylinux_2_28_aarch64
+            openssl_target: linux-aarch64
+            lib_dir: lib
     
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
-        run: |
-          yum install -y epel-release || true
-          # Sometimes epel-release is not directly avail via yum in bare images, check dnf
-          if ! rpm -q epel-release; then
-             dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm || true
-          fi
-          
-          # Install development tools and static libraries
-          yum install -y gcc gcc-c++ make perl wget tar gzip glibc-static
+      # QEMU is required for running aarch64 containers on x86_64 runners
+      - name: Set up QEMU
+        if: matrix.arch == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
-      - name: Download OpenSSL
-        run: |
-          OPENSSL_VERSION="${{ github.event.inputs.openssl_version || '3.3.1' }}"
-          echo "Building OpenSSL version: ${OPENSSL_VERSION}"
-          wget https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz
-          tar -xzf openssl-${OPENSSL_VERSION}.tar.gz
-          mv openssl-${OPENSSL_VERSION} openssl-src
-
-      - name: Configure and Build OpenSSL
-        working-directory: openssl-src
-        run: |
-          # Configure OpenSSL for static library build
-          # no-shared: Build only static libraries (generates .a files)
-          # no-tests: Skip building tests to speed up compilation
-          # no-apps: Skip building command-line tools (avoids static linking issues)
-          # -fPIC: Position Independent Code (useful if static lib is used in shared lib)
-          ./Configure linux-x86_64 \
-            --prefix=/opt/openssl \
-            --openssldir=/opt/openssl/ssl \
-            no-shared \
-            no-tests \
-            no-apps \
-            -fPIC
-          
-          # Build only libraries (skip apps to avoid static linking errors)
-          make -j$(nproc) build_libs
-          
-          # Install libraries and headers only
-          make install_sw
-
-      - name: Package Release
+      - name: Build OpenSSL in Container
         run: |
           OPENSSL_VERSION="${{ github.event.inputs.openssl_version || '3.3.1' }}"
           
-          # Create package directory
-          mkdir -p openssl-package
-          
-          # Copy necessary files (headers and static libraries only)
-          cp -r /opt/openssl/include openssl-package/
-          cp -r /opt/openssl/lib64 openssl-package/lib
-          
-          # Create version info
-          echo "OpenSSL ${OPENSSL_VERSION}" > openssl-package/VERSION
-          echo "Built with manylinux_2_28_x86_64" >> openssl-package/VERSION
-          echo "Static libraries for Linux x86_64" >> openssl-package/VERSION
-          echo "Build date: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> openssl-package/VERSION
-          
-          # Create tarball
-          cd openssl-package
-          tar -czvf ../openssl-${OPENSSL_VERSION}-linux-x86_64-static.tar.gz .
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            --platform linux/${{ matrix.arch == 'aarch64' && 'arm64' || 'amd64' }} \
+            ${{ matrix.image }} \
+            bash -c "
+              # Install dependencies
+              yum install -y epel-release || true
+              if ! rpm -q epel-release; then
+                dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm || true
+              fi
+              yum install -y gcc gcc-c++ make perl wget tar gzip
+              
+              # Download OpenSSL
+              wget https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz
+              tar -xzf openssl-${OPENSSL_VERSION}.tar.gz
+              cd openssl-${OPENSSL_VERSION}
+              
+              # Configure and build
+              ./Configure ${{ matrix.openssl_target }} \
+                --prefix=/opt/openssl \
+                --openssldir=/opt/openssl/ssl \
+                no-shared \
+                no-tests \
+                no-apps \
+                -fPIC
+              
+              make -j\$(nproc) build_libs
+              make install_sw
+              
+              # Package
+              mkdir -p /workspace/openssl-package
+              cp -r /opt/openssl/include /workspace/openssl-package/
+              cp -r /opt/openssl/${{ matrix.lib_dir }} /workspace/openssl-package/lib
+              
+              # Version info
+              echo \"OpenSSL ${OPENSSL_VERSION}\" > /workspace/openssl-package/VERSION
+              echo \"Built with manylinux_2_28_${{ matrix.arch }}\" >> /workspace/openssl-package/VERSION
+              echo \"Static libraries for Linux ${{ matrix.arch }}\" >> /workspace/openssl-package/VERSION
+              echo \"Build date: \$(date -u +%Y-%m-%dT%H:%M:%SZ)\" >> /workspace/openssl-package/VERSION
+              
+              # Create tarball
+              cd /workspace/openssl-package
+              tar -czvf /workspace/openssl-${OPENSSL_VERSION}-linux-${{ matrix.arch }}-static.tar.gz .
+            "
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openssl-static-build
-          path: openssl-*-linux-x86_64-static.tar.gz
+          name: openssl-static-${{ matrix.arch }}
+          path: openssl-*-linux-${{ matrix.arch }}-static.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -96,14 +113,17 @@ jobs:
           tag_name: openssl-${{ github.event.inputs.openssl_version || '3.3.1' }}
           name: OpenSSL ${{ github.event.inputs.openssl_version || '3.3.1' }} Static Build
           body: |
-            ## OpenSSL ${{ github.event.inputs.openssl_version || '3.3.1' }} Static Build for Linux x86_64
+            ## OpenSSL ${{ github.event.inputs.openssl_version || '3.3.1' }} Static Build for Linux
             
-            This release contains statically compiled OpenSSL libraries.
+            This release contains statically compiled OpenSSL libraries for multiple architectures.
             
             ### Build Environment
-            - **Container**: `quay.io/pypa/manylinux_2_28_x86_64`
+            - **Container**: `quay.io/pypa/manylinux_2_28_*`
             - **glibc**: 2.28+ compatible
-            - **Architecture**: x86_64
+            
+            ### Available Architectures
+            - **x86_64**: For 64-bit Intel/AMD processors
+            - **aarch64**: For 64-bit ARM processors (e.g., AWS Graviton, Raspberry Pi 4)
             
             ### Contents
             - `include/` - Header files
@@ -111,7 +131,7 @@ jobs:
             
             ### Usage
             Link with `-lssl -lcrypto -lpthread -ldl` when using these static libraries.
-          files: openssl-*-linux-x86_64-static.tar.gz
+          files: artifacts/*
           draft: false
           prerelease: false
         env:
