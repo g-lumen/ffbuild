@@ -1,0 +1,81 @@
+name: Build FFmpeg Linux x86_64
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: quay.io/pypa/manylinux_2_28_x86_64
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          yum install -y epel-release || true
+          # Sometimes epel-release is not directly avail via yum in bare images, check dnf
+          if ! rpm -q epel-release; then
+             dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm || true
+          fi
+          
+          # Install development tools and library dependencies
+          yum install -y gcc gcc-c++ make yasm nasm git wget tar gzip \
+                         openssl-devel freetype-devel libass-devel \
+                         zlib-devel bzip2
+
+      - name: Download FFmpeg 5.1.8
+        run: |
+          wget https://ffmpeg.org/releases/ffmpeg-5.1.8.tar.bz2
+          tar -xjf ffmpeg-5.1.8.tar.bz2
+          mv ffmpeg-5.1.8 ffmpeg-src
+
+      - name: Configure and Build
+        working-directory: ffmpeg-src
+        run: |
+          # Create install directory (absolute path usually safer, but relative works if prefix=./install)
+          # The user specific command used ./install
+          
+          ./configure --prefix=./install \
+           --disable-everything \
+           --enable-shared --disable-static \
+           --enable-network --enable-runtime-cpudetect --enable-openssl \
+           --enable-avformat --enable-avcodec --enable-avutil --enable-swscale --enable-swresample \
+           --enable-protocol=tcp,udp,rtp,rtmp,rtmps,http,https,tls,file,hls,concat \
+           --enable-demuxer=flv,mpegts,mov,mp4,h264,hevc,webm,rtsp,sdp,rtp,matroska,avi,mp3,aac,wav,image2,gif,concat,ass,subrip,webvtt \
+           --enable-decoder=h264,hevc,mpeg4,mpeg2video,mjpeg,png,bmp,gif,webp,vp8,vp9,aac,mp3,ac3,eac3,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le,flac,vorbis,opus,ass,subrip,dvdsub,pgssub,dca,truehd,mlp \
+           --enable-parser=h264,hevc,mpeg4video,mjpeg,aac,mpegaudio,ac3,flac,vorbis,opus,vp9,dca,truehd,mlp \
+           --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc \
+           --disable-debug --disable-doc \
+           --extra-cflags="-O3" --extra-ldflags="" \
+           --enable-filter=subtitles,scale,yadif,colorspace,drawtext \
+           --enable-libfreetype --enable-libass \
+           --arch=x86_64
+           
+           make -j$(nproc)
+           make install
+
+      - name: Package Release
+        run: |
+          cd ffmpeg-src/install
+          # Create a tarball of the install directory (includes lib, include, bin, share)
+          tar -czvf ../../ffmpeg-5.1.8-linux-x86_64.tar.gz .
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-build
+          path: ffmpeg-5.1.8-linux-x86_64.tar.gz
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ffmpeg-5.1.8-linux-x86_64.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
