@@ -46,6 +46,13 @@ jobs:
           # Define OpenSSL path relative to workspace
           OPENSSL_DIR="${GITHUB_WORKSPACE}/vendor/openssl/linux-x86_64"
           
+          # Fix hardcoded paths in .pc files (they were built with --prefix=/opt/openssl)
+          sed -i "s|/opt/openssl/lib64|${OPENSSL_DIR}/lib|g" ${OPENSSL_DIR}/lib/pkgconfig/*.pc
+          sed -i "s|/opt/openssl/include|${OPENSSL_DIR}/include|g" ${OPENSSL_DIR}/lib/pkgconfig/*.pc
+          
+          # Set PKG_CONFIG_PATH so FFmpeg's configure can find OpenSSL
+          export PKG_CONFIG_PATH="${OPENSSL_DIR}/lib/pkgconfig:${PKG_CONFIG_PATH}"
+          
           ./configure --prefix=./install \
            --disable-everything \
            --enable-shared --disable-static \
