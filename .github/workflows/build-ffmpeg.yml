@@ -29,8 +29,9 @@ jobs:
           fi
           
           # Install development tools and library dependencies
+          # Note: We removed openssl-devel to use our vendor-provided static library
           yum install -y gcc gcc-c++ make yasm nasm git wget tar gzip \
-                         openssl-devel freetype-devel libass-devel \
+                         freetype-devel libass-devel \
                          zlib-devel bzip2
 
       - name: Download FFmpeg 5.1.8
@@ -42,13 +43,14 @@ jobs:
       - name: Configure and Build
         working-directory: ffmpeg-src
         run: |
-          # Create install directory (absolute path usually safer, but relative works if prefix=./install)
-          # The user specific command used ./install
+          # Define OpenSSL path relative to workspace
+          OPENSSL_DIR="${GITHUB_WORKSPACE}/vendor/openssl/linux-x86_64"
           
           ./configure --prefix=./install \
            --disable-everything \
            --enable-shared --disable-static \
            --enable-network --enable-runtime-cpudetect \
+           --enable-openssl \
            --enable-avformat --enable-avcodec --enable-avutil --enable-swscale --enable-swresample \
            --enable-protocol=tcp,udp,rtp,rtmp,rtmps,http,https,tls,file,hls,concat \
            --enable-demuxer=flv,mpegts,mov,mp4,h264,hevc,webm,rtsp,sdp,rtp,matroska,avi,mp3,aac,wav,image2,gif,concat,ass,subrip,webvtt \
@@ -56,7 +58,9 @@ jobs:
            --enable-parser=h264,hevc,mpeg4video,mjpeg,aac,mpegaudio,ac3,flac,vorbis,opus,vp9,dca,truehd,mlp \
            --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc \
            --disable-debug --disable-doc \
-           --extra-cflags="-O3" --extra-ldflags="" \
+           --extra-cflags="-I${OPENSSL_DIR}/include -O3" \
+           --extra-ldflags="-L${OPENSSL_DIR}/lib" \
+           --pkg-config-flags="--static" \
            --enable-filter=subtitles,scale,yadif,colorspace,drawtext \
            --enable-libfreetype --enable-libass \
            --arch=x86_64
