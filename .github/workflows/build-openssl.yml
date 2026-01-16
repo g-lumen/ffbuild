@@ -112,10 +112,10 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            runner: macos-13  # Intel runner
+            runner: macos-15-intel  # New migration tag for Intel x64 on macOS 15
             openssl_target: darwin64-x86_64-cc
           - arch: arm64
-            runner: macos-14  # Apple Silicon runner
+            runner: macos-15        # Apple Silicon (M1/M2) runner on macOS 15
             openssl_target: darwin64-arm64-cc
     
     runs-on: ${{ matrix.runner }}
@@ -217,8 +217,8 @@ jobs:
             - **glibc**: 2.28+ compatible
             
             ### macOS Build Environment
-            - **Intel (x86_64)**: Built on macos-13 runner
-            - **Apple Silicon (arm64)**: Built on macos-14 runner
+            - **Intel (x86_64)**: Built on macos-15-intel runner
+            - **Apple Silicon (arm64)**: Built on macos-15 runner
             
             ### Available Platforms & Architectures
             
