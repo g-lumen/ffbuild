@@ -1,4 +1,4 @@
-name: Build FFmpeg Linux
+name: Build FFmpeg
 
 on:
   workflow_dispatch:
@@ -10,7 +10,10 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  # ============================================
+  # Linux Builds (x86_64 and aarch64)
+  # ============================================
+  build-linux:
     strategy:
       matrix:
         include:
@@ -94,11 +97,142 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ffmpeg-build-${{ matrix.arch }}
+          name: ffmpeg-linux-${{ matrix.arch }}
           path: ffmpeg-5.1.8-linux-${{ matrix.arch }}.tar.gz
 
+  # ============================================
+  # macOS Builds (x86_64 and arm64)
+  # ============================================
+  build-macos:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: macos-13  # Intel runner
+            openssl_arch: darwin64-x86_64-cc
+          - arch: arm64
+            runner: macos-14  # Apple Silicon runner
+            openssl_arch: darwin64-arm64-cc
+    
+    runs-on: ${{ matrix.runner }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          brew update
+          brew install yasm nasm pkg-config freetype libass
+
+      - name: Download FFmpeg 5.1.8
+        run: |
+          wget https://ffmpeg.org/releases/ffmpeg-5.1.8.tar.bz2
+          tar -xjf ffmpeg-5.1.8.tar.bz2
+          mv ffmpeg-5.1.8 ffmpeg-src
+
+      - name: Configure and Build
+        working-directory: ffmpeg-src
+        run: |
+          # Define OpenSSL path relative to workspace (architecture-specific)
+          OPENSSL_DIR="${GITHUB_WORKSPACE}/vendor/openssl/darwin-${{ matrix.arch }}"
+          
+          # Check if vendor OpenSSL exists, otherwise use system OpenSSL
+          if [ -d "${OPENSSL_DIR}" ]; then
+            echo "Using vendor OpenSSL from ${OPENSSL_DIR}"
+            
+            # Fix hardcoded paths in .pc files if they exist
+            if [ -d "${OPENSSL_DIR}/lib/pkgconfig" ]; then
+              sed -i '' "s|/opt/openssl/lib|${OPENSSL_DIR}/lib|g" ${OPENSSL_DIR}/lib/pkgconfig/*.pc 2>/dev/null || true
+              sed -i '' "s|/opt/openssl/include|${OPENSSL_DIR}/include|g" ${OPENSSL_DIR}/lib/pkgconfig/*.pc 2>/dev/null || true
+            fi
+            
+            export PKG_CONFIG_PATH="${OPENSSL_DIR}/lib/pkgconfig:${PKG_CONFIG_PATH}"
+            OPENSSL_CFLAGS="-I${OPENSSL_DIR}/include"
+            OPENSSL_LDFLAGS="-L${OPENSSL_DIR}/lib"
+          else
+            echo "Vendor OpenSSL not found, building without OpenSSL or using system OpenSSL"
+            # Use Homebrew OpenSSL as fallback
+            OPENSSL_PREFIX=$(brew --prefix openssl@3 2>/dev/null || brew --prefix openssl)
+            if [ -d "${OPENSSL_PREFIX}" ]; then
+              echo "Using Homebrew OpenSSL from ${OPENSSL_PREFIX}"
+              export PKG_CONFIG_PATH="${OPENSSL_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH}"
+              OPENSSL_CFLAGS="-I${OPENSSL_PREFIX}/include"
+              OPENSSL_LDFLAGS="-L${OPENSSL_PREFIX}/lib"
+            else
+              echo "No OpenSSL found, disabling OpenSSL support"
+              OPENSSL_CFLAGS=""
+              OPENSSL_LDFLAGS=""
+              ENABLE_OPENSSL=""
+            fi
+          fi
+          
+          # Get Homebrew paths for freetype and libass
+          FREETYPE_PREFIX=$(brew --prefix freetype)
+          LIBASS_PREFIX=$(brew --prefix libass)
+          
+          ./configure --prefix=./install \
+           --disable-everything \
+           --enable-shared --disable-static \
+           --enable-network --enable-runtime-cpudetect \
+           --enable-openssl \
+           --enable-avformat --enable-avcodec --enable-avutil --enable-swscale --enable-swresample \
+           --enable-protocol=tcp,udp,rtp,rtmp,rtmps,http,https,tls,file,hls,concat \
+           --enable-demuxer=flv,mpegts,mov,mp4,h264,hevc,webm,rtsp,sdp,rtp,matroska,avi,mp3,aac,wav,image2,gif,concat,ass,subrip,webvtt \
+           --enable-decoder=h264,hevc,mpeg4,mpeg2video,mjpeg,png,bmp,gif,webp,vp8,vp9,aac,mp3,ac3,eac3,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le,flac,vorbis,opus,ass,subrip,dvdsub,pgssub,dca,truehd,mlp \
+           --enable-parser=h264,hevc,mpeg4video,mjpeg,aac,mpegaudio,ac3,flac,vorbis,opus,vp9,dca,truehd,mlp \
+           --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc \
+           --disable-debug --disable-doc \
+           --extra-cflags="${OPENSSL_CFLAGS} -I${FREETYPE_PREFIX}/include/freetype2 -I${LIBASS_PREFIX}/include -O3" \
+           --extra-ldflags="${OPENSSL_LDFLAGS} -L${FREETYPE_PREFIX}/lib -L${LIBASS_PREFIX}/lib" \
+           --pkg-config-flags="--static" \
+           --enable-filter=subtitles,scale,yadif,colorspace,drawtext \
+           --enable-libfreetype --enable-libass \
+           --arch=${{ matrix.arch }}
+           
+          make -j$(sysctl -n hw.ncpu)
+          make install
+
+      - name: Fix dylib paths
+        run: |
+          cd ffmpeg-src/install/lib
+          # Update dylib install names to use @rpath
+          for lib in *.dylib; do
+            if [ -f "$lib" ] && [ ! -L "$lib" ]; then
+              install_name_tool -id "@rpath/$lib" "$lib" 2>/dev/null || true
+            fi
+          done
+          
+          # Update inter-library dependencies
+          for lib in *.dylib; do
+            if [ -f "$lib" ] && [ ! -L "$lib" ]; then
+              for dep in libavcodec libavformat libavutil libswscale libswresample; do
+                old_path=$(otool -L "$lib" | grep "$dep" | awk '{print $1}' | head -1)
+                if [ -n "$old_path" ] && [[ "$old_path" != @rpath* ]]; then
+                  dep_name=$(basename "$old_path")
+                  install_name_tool -change "$old_path" "@rpath/$dep_name" "$lib" 2>/dev/null || true
+                fi
+              done
+            fi
+          done
+
+      - name: Package Release
+        run: |
+          cd ffmpeg-src/install
+          # Create a tarball of the install directory (includes lib, include, bin, share)
+          tar -czvf ../../ffmpeg-5.1.8-darwin-${{ matrix.arch }}.tar.gz .
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-darwin-${{ matrix.arch }}
+          path: ffmpeg-5.1.8-darwin-${{ matrix.arch }}.tar.gz
+
+  # ============================================
+  # Release job
+  # ============================================
   release:
-    needs: build
+    needs: [build-linux, build-macos]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
