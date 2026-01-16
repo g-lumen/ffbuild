@@ -135,7 +135,7 @@ jobs:
         working-directory: ffmpeg-src
         run: |
           # Define OpenSSL path relative to workspace (architecture-specific)
-          OPENSSL_DIR="${GITHUB_WORKSPACE}/vendor/openssl/darwin-${{ matrix.arch }}"
+          OPENSSL_DIR="${GITHUB_WORKSPACE}/vendor/openssl/macos-${{ matrix.arch }}"
           
           # Check if vendor OpenSSL exists, otherwise use system OpenSSL
           if [ -d "${OPENSSL_DIR}" ]; then
@@ -220,13 +220,13 @@ jobs:
         run: |
           cd ffmpeg-src/install
           # Create a tarball of the install directory (includes lib, include, bin, share)
-          tar -czvf ../../ffmpeg-5.1.8-darwin-${{ matrix.arch }}.tar.gz .
+          tar -czvf ../../ffmpeg-5.1.8-macos-${{ matrix.arch }}.tar.gz .
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ffmpeg-darwin-${{ matrix.arch }}
-          path: ffmpeg-5.1.8-darwin-${{ matrix.arch }}.tar.gz
+          name: ffmpeg-macos-${{ matrix.arch }}
+          path: ffmpeg-5.1.8-macos-${{ matrix.arch }}.tar.gz
 
   # ============================================
   # Release job

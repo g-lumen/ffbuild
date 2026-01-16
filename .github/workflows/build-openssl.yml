@@ -178,13 +178,13 @@ jobs:
           
           # Create tarball
           cd openssl-package
-          tar -czvf ../openssl-${OPENSSL_VERSION}-darwin-${{ matrix.arch }}-static.tar.gz .
+          tar -czvf ../openssl-${OPENSSL_VERSION}-macos-${{ matrix.arch }}-static.tar.gz .
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openssl-darwin-${{ matrix.arch }}
-          path: openssl-*-darwin-${{ matrix.arch }}-static.tar.gz
+          name: openssl-macos-${{ matrix.arch }}
+          path: openssl-*-macos-${{ matrix.arch }}-static.tar.gz
 
   # ============================================
   # Release job
@@ -226,7 +226,7 @@ jobs:
             - **x86_64**: For 64-bit Intel/AMD processors
             - **aarch64**: For 64-bit ARM processors (e.g., AWS Graviton, Raspberry Pi 4)
             
-            #### macOS (Darwin)
+            #### macOS
             - **x86_64**: For Intel Macs
             - **arm64**: For Apple Silicon Macs (M1/M2/M3)
             
