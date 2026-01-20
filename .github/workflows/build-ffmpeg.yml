@@ -46,11 +46,11 @@ jobs:
                          freetype-devel libass-devel \
                          zlib-devel bzip2
 
-      - name: Download FFmpeg 5.1.8
+      - name: Download FFmpeg 6.1.2
         run: |
-          wget https://ffmpeg.org/releases/ffmpeg-5.1.8.tar.bz2
-          tar -xjf ffmpeg-5.1.8.tar.bz2
-          mv ffmpeg-5.1.8 ffmpeg-src
+          wget https://ffmpeg.org/releases/ffmpeg-6.1.2.tar.bz2
+          tar -xjf ffmpeg-6.1.2.tar.bz2
+          mv ffmpeg-6.1.2 ffmpeg-src
 
       - name: Configure and Build
         working-directory: ffmpeg-src
@@ -92,13 +92,13 @@ jobs:
         run: |
           cd ffmpeg-src/install
           # Create a tarball of the install directory (includes lib, include, bin, share)
-          tar -czvf ../../ffmpeg-5.1.8-linux-${{ matrix.arch }}.tar.gz .
+          tar -czvf ../../ffmpeg-6.1.2-linux-${{ matrix.arch }}.tar.gz .
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-linux-${{ matrix.arch }}
-          path: ffmpeg-5.1.8-linux-${{ matrix.arch }}.tar.gz
+          path: ffmpeg-6.1.2-linux-${{ matrix.arch }}.tar.gz
 
   # ============================================
   # macOS Builds (x86_64 and arm64)
@@ -125,11 +125,11 @@ jobs:
           brew update
           brew install yasm nasm pkg-config freetype libass
 
-      - name: Download FFmpeg 5.1.8
+      - name: Download FFmpeg 6.1.2
         run: |
-          wget https://ffmpeg.org/releases/ffmpeg-5.1.8.tar.bz2
-          tar -xjf ffmpeg-5.1.8.tar.bz2
-          mv ffmpeg-5.1.8 ffmpeg-src
+          wget https://ffmpeg.org/releases/ffmpeg-6.1.2.tar.bz2
+          tar -xjf ffmpeg-6.1.2.tar.bz2
+          mv ffmpeg-6.1.2 ffmpeg-src
 
       - name: Configure and Build
         working-directory: ffmpeg-src
@@ -220,13 +220,13 @@ jobs:
         run: |
           cd ffmpeg-src/install
           # Create a tarball of the install directory (includes lib, include, bin, share)
-          tar -czvf ../../ffmpeg-5.1.8-macos-${{ matrix.arch }}.tar.gz .
+          tar -czvf ../../ffmpeg-6.1.2-macos-${{ matrix.arch }}.tar.gz .
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-macos-${{ matrix.arch }}
-          path: ffmpeg-5.1.8-macos-${{ matrix.arch }}.tar.gz
+          path: ffmpeg-6.1.2-macos-${{ matrix.arch }}.tar.gz
 
   # ============================================
   # Release job
